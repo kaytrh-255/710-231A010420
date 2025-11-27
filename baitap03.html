@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Game Đoán Số 1–100</title>
+<style>
+  :root{
+    --bg:#0b1220;
+    --card:#0f1724;
+    --accent:#60a5fa;
+    --muted:#94a3b8;
+    --success:#34d399;
+    --danger:#fb7185;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0;
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-family:Inter, system-ui, Arial;
+    background: linear-gradient(180deg,#071226 0%, #07192b 100%);
+    color:#e6eef8;
+    padding:24px;
+  }
+
+  .app {
+    width:100%;
+    max-width:560px;
+    background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
+    border-radius:14px;
+    padding:20px;
+    box-shadow: 0 10px 30px rgba(2,6,23,0.6);
+    position:relative;
+    overflow:visible;
+  }
+
+  h1{ margin:0 0 8px; font-size:20px }
+  p.lead{ margin:0 0 18px; color:var(--muted) }
+
+  .controls{
+    display:flex;
+    gap:10px;
+    margin-bottom:12px;
+  }
+
+  input[type="number"]{
+    flex:1;
+    padding:12px;
+    border-radius:10px;
+    border:1px solid rgba(255,255,255,0.04);
+    background: rgba(255,255,255,0.02);
+    color:inherit;
+    outline:none;
+  }
+
+  button {
+    padding:10px 14px;
+    border-radius:10px;
+    border:0;
+    cursor:pointer;
+    background:linear-gradient(180deg,var(--accent), #3b82f6);
+    color:#06202f;
+    font-weight:700;
+  }
+
+  .small {
+    background:transparent;
+    border:1px solid rgba(255,255,255,0.06);
+    color:var(--muted);
+    padding:8px 10px;
+    border-radius:8px;
+    font-weight:600;
+  }
+
+  .msg {
+    margin-top:8px;
+    min-height:26px;
+    font-weight:600;
+  }
+
+  .msg.low { color:#fbbf24 }       /* too low - amber */
+  .msg.high{ color:#fb7185 }      /* too high - red */
+  .msg.ok  { color:var(--success) }/* correct */
+
+  .meta {
+    margin-top:12px;
+    color:var(--muted);
+    font-size:13px;
+    display:flex;
+    gap:12px;
+    align-items:center;
+  }
+
+  /* Confetti area fixed above the app so it overflows nicely */
+  .confetti-layer {
+    pointer-events:none;
+    position:fixed;
+    left:0; top:0;
+    width:100%; height:100%;
+    overflow:hidden;
+    z-index:9999;
+  }
+
+  .confetti {
+    position: absolute;
+    width:10px;
+    height:14px;
+    opacity:0.95;
+    transform-origin:center;
+    will-change: transform, opacity;
+    animation: fall linear forwards;
+    border-radius:2px;
+  }
+
+  @keyframes fall {
+    0% { transform: translateY(-10vh) rotateZ(0deg) translateX(0); opacity:1; }
+    100% { transform: translateY(110vh) rotateZ(720deg) translateX(var(--tx)); opacity:0.85; }
+  }
+
+  /* small sparkle for final message */
+  .celebrate {
+    display:inline-block;
+    margin-left:8px;
+    transform-origin:center;
+    animation: pop .9s cubic-bezier(.2,.9,.3,1);
+  }
+  @keyframes pop {
+    0% { transform: scale(.2) rotate(-20deg); opacity:0 }
+    60% { transform: scale(1.1) rotate(10deg); opacity:1 }
+    100% { transform: scale(1) rotate(0deg); opacity:1 }
+  }
+
+  /* responsive */
+  @media (max-width:520px){
+    .app{ padding:16px }
+    input[type="number"]{ padding:10px }
+    button{ padding:9px 12px }
+  }
+</style>
+</head>
+<body>
+  <div class="app" role="application" aria-labelledby="title">
+    <h1 id="title">🎯 Game: Đoán Số (1–100)</h1>
+    <p class="lead">Máy sẽ chọn 1 số ngẫu nhiên từ 1 đến 100. Bạn nhập dự đoán, JS sẽ cho biết "quá cao", "quá thấp" hoặc "chính xác".</p>
+
+    <div class="controls" aria-live="polite">
+      <input id="guessInput" type="number" inputmode="numeric" min="1" max="100" placeholder="Nhập số (1–100)" aria-label="Nhập số đoán (1 đến 100)">
+      <button id="submitBtn">Đoán</button>
+      <button id="resetBtn" class="small">Chơi lại</button>
+    </div>
+
+    <div id="message" class="msg" aria-live="assertive"></div>
+
+    <div class="meta">
+      <div id="tries">Số lần thử: 0</div>
+      <div id="rangeInfo">Phạm vi: 1–100</div>
+    </div>
+  </div>
+
+  <!-- confetti container (created hidden, used when win) -->
+  <div id="confettiLayer" class="confetti-layer" aria-hidden="true"></div>
+
+<script>
+/*
+  Game Đoán Số (1-100)
+  - Gen số random: Math.floor(Math.random() * 100) + 1
+  - Ghi đếm số lần thử
+  - Validate input: parseInt + range check + NaN guard
+  - Khi đúng: show confetti bằng cách tạo nhiều div .confetti với random properties và CSS animation fall
+  - Disable input khi thắng, cho phép chơi lại
+*/
+
+(function(){
+  // ------- state (closure-scoped) -------
+  const MIN = 1, MAX = 100;
+  let target = generateRandom();
+  let tries = 0;
+  let finished = false;
+
+  // ------- dom refs -------
+  const inputEl = document.getElementById('guessInput');
+  const submitBtn = document.getElementById('submitBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const msgEl = document.getElementById('message');
+  const triesEl = document.getElementById('tries');
+  const rangeEl = document.getElementById('rangeInfo');
+  const confettiLayer = document.getElementById('confettiLayer');
+
+  // ------- helpers -------
+  function generateRandom() {
+    // Sinh số nguyên ngẫu nhiên trong khoảng [MIN, MAX], inclusive
+    // Math.random() -> [0,1) so multiply by (MAX - MIN + 1) then floor + MIN
+    return Math.floor(Math.random() * (MAX - MIN + 1)) + MIN;
+  }
+
+  function updateTries() {
+    triesEl.textContent = `Số lần thử: ${tries}`;
+  }
+
+  function setMessage(text, cls) {
+    msgEl.textContent = text;
+    msgEl.className = 'msg'; // reset classes
+    if (cls) msgEl.classList.add(cls);
+  }
+
+  function validateAndParse(value) {
+    // value could be string from input; ensure integer and within range
+    if (value === null || value === undefined) return { ok:false, reason:'empty' };
+    // Trim & parse
+    const num = Number(value);
+    if (Number.isNaN(num)) return { ok:false, reason:'nan' };
+    // Reject decimals: require integer
+    const intVal = Math.trunc(num);
+    if (intVal !== num) return { ok:false, reason:'not-integer' };
+    if (intVal < MIN || intVal > MAX) return { ok:false, reason:'out-of-range' };
+    return { ok:true, value:intVal };
+  }
+
+  // ------- confetti -------
+  function spawnConfetti(count = 60) {
+    // Clear existing just in case
+    confettiLayer.innerHTML = '';
+    // Create many small divs with random color/position/animation duration/tx offset
+    const colors = ['#ef4444','#f97316','#f59e0b','#facc15','#10b981','#06b6d4','#3b82f6','#8b5cf6','#ec4899'];
+    const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+    for (let i=0;i<count;i++){
+      const el = document.createElement('div');
+      el.className = 'confetti';
+      const w = 6 + Math.random()*12; // width
+      const h = 8 + Math.random()*14; // height
+      el.style.width = `${w}px`;
+      el.style.height = `${h}px`;
+      el.style.background = colors[Math.floor(Math.random()*colors.length)];
+      // random start left within viewport (0..vw)
+      const left = Math.random() * 100; // percent
+      el.style.left = `${left}%`;
+      // tx is horizontal drift amount for animation end (random px)
+      const tx = (Math.random()*200 - 100).toFixed(2) + 'px';
+      el.style.setProperty('--tx', tx);
+      // random animation duration & delay
+      const dur = 3 + Math.random()*2.5; // 3s - 5.5s
+      const delay = Math.random() * 0.6; // up to 0.6s
+      el.style.animationDuration = `${dur}s`;
+      el.style.animationDelay = `${delay}s`;
+      // random rotation start
+      el.style.transform = `rotate(${Math.random()*360}deg)`;
+      // small tilt using transform-origin variation
+      el.style.top = `${-5 - Math.random()*10}vh`;
+      confettiLayer.appendChild(el);
+    }
+    // Remove confetti after animation finished to free DOM
+    setTimeout(()=> confettiLayer.innerHTML = '', 7000);
+  }
+
+  // ------- game actions -------
+  function handleGuess() {
+    if (finished) return;
+    const raw = inputEl.value;
+    const parsed = validateAndParse(raw);
+    if (!parsed.ok) {
+      // choose message based on reason
+      switch(parsed.reason){
+        case 'empty': setMessage('Vui lòng nhập 1 số.', 'high'); break;
+        case 'nan': setMessage('Không phải số hợp lệ.', 'high'); break;
+        case 'not-integer': setMessage('Chỉ nhập số nguyên (không nhập thập phân).', 'high'); break;
+        case 'out-of-range': setMessage(`Nhập số trong khoảng ${MIN}–${MAX}.`, 'high'); break;
+        default: setMessage('Giá trị không hợp lệ.', 'high');
+      }
+      return;
+    }
+
+    const guess = parsed.value;
+    tries++;
+    updateTries();
+
+    if (guess === target) {
+      finished = true;
+      setMessage(`🎉 Chính xác! Bạn đoán đúng sau ${tries} lượt.`, 'ok');
+      // visual confetti
+      spawnConfetti(90);
+      // small celebrate icon
+      const celeb = document.createElement('span');
+      celeb.className = 'celebrate';
+      celeb.textContent = '✨';
+      msgEl.appendChild(celeb);
+      // disable input & submit
+      inputEl.disabled = true;
+      submitBtn.disabled = true;
+    } else if (guess < target) {
+      setMessage('Quá thấp — thử số lớn hơn.', 'low');
+    } else {
+      setMessage('Quá cao — thử số nhỏ hơn.', 'high');
+    }
+
+    // helpful hint: update range displayed (optional)
+    rangeEl.textContent = `Phạm vi: ${MIN}–${MAX}`;
+    // keep focus for quick retry, but don't focus if finished
+    if (!finished) {
+      inputEl.focus();
+      inputEl.select();
+    }
+  }
+
+  function resetGame() {
+    target = generateRandom();
+    tries = 0;
+    finished = false;
+    updateTries();
+    setMessage('Bắt đầu lại — nhập đoán mới!', null);
+    inputEl.disabled = false;
+    submitBtn.disabled = false;
+    inputEl.value = '';
+    inputEl.focus();
+    // clear confetti if any
+    confettiLayer.innerHTML = '';
+    rangeEl.textContent = `Phạm vi: ${MIN}–${MAX}`;
+    // console log for debugging (won't be shown to user)
+    // console.log('New target:', target);
+  }
+
+  // ------- wire events -------
+  submitBtn.addEventListener('click', handleGuess);
+  inputEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') handleGuess();
+  });
+  resetBtn.addEventListener('click', resetGame);
+
+  // init UI
+  updateTries();
+  setMessage('Chúc may mắn! Nhập số và nhấn "Đoán".');
+  // (Note: for fairness, we don't reveal target; during dev you can console.log(target) if needed)
+})();
+</script>
+</body>
+</html>
